@@ -15,7 +15,7 @@ sub entry {
     print " ret\n";
 }
 	
-entry("fork");
+entry("fork"); # entry for system call
 entry("exit");
 entry("wait");
 entry("pipe");
@@ -36,3 +36,5 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
+entry("trace");
+entry("sysinfo");
