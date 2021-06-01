@@ -42,13 +42,31 @@ uint64
 sys_sbrk(void)
 {
   int addr;
-  int n;
+  int n, j;
+  pte_t *pte, *k_pte;
+  struct proc* p = myproc();
 
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sz;
+  if(addr + n >= PLIC) // cannot exceed the minimum kernel va
+    return -1;
   if(growproc(n) < 0)
     return -1;
+  if(n > 0){
+    for(j = addr; j < addr + n; j += PGSIZE){
+      pte = walk(p->pagetable, j, 0); // find the new page of process
+      k_pte = walk(p->kpagetable, j, 1); // alloc page for process's kernel page table
+      *k_pte = (*pte) & ~PTE_U; // set flag_U to false to allow kernel access
+    }
+  }
+  else{
+    int oldpg = PGROUNDUP(addr), newpg = PGROUNDUP(addr + n);
+    uvmunmap(p->kpagetable, newpg, (oldpg-newpg)/PGSIZE, 0);
+    // for(j = addr - PGSIZE; j >= addr + n; j -= PGSIZE){
+    //   uvmunmap(p->kpagetable, j, 1, 0);
+    // }
+  }
   return addr;
 }
 

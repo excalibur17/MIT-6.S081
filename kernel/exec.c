@@ -13,13 +13,14 @@ int
 exec(char *path, char **argv)
 {
   char *s, *last;
-  int i, off;
+  int i, off, j;
   uint64 argc, sz = 0, sp, ustack[MAXARG+1], stackbase;
   struct elfhdr elf;
   struct inode *ip;
   struct proghdr ph;
   pagetable_t pagetable = 0, oldpagetable;
   struct proc *p = myproc();
+  pte_t *pte, *k_pte;
 
   begin_op();
 
@@ -50,6 +51,8 @@ exec(char *path, char **argv)
       goto bad;
     uint64 sz1;
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz)) == 0)
+      goto bad;
+    if(sz1 >= PLIC)
       goto bad;
     sz = sz1;
     if(ph.vaddr % PGSIZE != 0)
@@ -97,6 +100,14 @@ exec(char *path, char **argv)
   if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
     goto bad;
 
+  // release old kernel page table
+  uvmunmap(p->kpagetable, 0, PGROUNDUP(oldsz)/PGSIZE, 0);
+  for(j = 0; j < sz; j += PGSIZE){
+    pte = walk(pagetable, j, 0);
+    k_pte = walk(p->kpagetable, j, 1);
+    *k_pte = (*pte) & ~PTE_U;
+  }
+
   // arguments to user main(argc, argv)
   // argc is returned via the system call return
   // value, which goes in a0.
@@ -115,6 +126,10 @@ exec(char *path, char **argv)
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
+
+  if(p->pid == 1){
+    vmprint(p->pagetable);
+  }
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
