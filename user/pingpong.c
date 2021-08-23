@@ -27,7 +27,9 @@ int main(int argc, char *argv[]){
 		write(parent2child[1], &c, 1); // write to parent's pipe
 		close(parent2child[1]); // this is ok, as there are data available in parent2child, read from parent2child[0] will not return 0
 		
-		if(read(child2parent[0], &c, 1)<=0){ // read from child's pipe, if no data available, will wait other fds that pointing to the write end of this pipe to write, or return 0 when all fds pointing to the write end closed.
+		// read from child's pipe, if no data available, will wait other fds that pointing to the write end of this pipe to write, 
+		// or return 0 when all fds pointing to the write end closed.
+		if(read(child2parent[0], &c, 1)<=0){ 
 			fprintf(2, "write error in parent.\n");
 		}
 		fprintf(1, "%d: received pong\n", getpid());

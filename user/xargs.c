@@ -20,7 +20,7 @@ int main(int argc, char *argv[]){
             if(c==' ' || c=='\n'){ // seperation of strings
                 buf[buf_cur++]='\0'; //set end of string
                 _argv[arg_idx++]=buf+buf_begin;
-                // printf("%s\n", _argv[arg_idx-1]);
+                // printf("%s\n", _argv[arg_idx-1]); // hello, too
                 buf_begin=buf_cur;
                 if(c=='\n'){
                     break;

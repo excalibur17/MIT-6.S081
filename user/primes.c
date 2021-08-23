@@ -17,13 +17,12 @@ void base_pipe(){
   if(read(R, &a, sizeof(a))>0){ // read from R
   	pipe(p); // create a new pipe
 		if(fork()!=0){ // parent
-			printf("prime %d\n", a); // write to 1, note that 1 is not redirected yes and it's still standard output here
+			printf("prime %d\n", a); // write to 1, note that 1 is not redirected yet and it's still standard output here
 			redirect(W, p); // alought redirect is not necessary, close unused fd will save resources, also close(p[0]) and close(p[1]) will work the same
-			
 			int b;
 			while(read(R, &b, sizeof(b))>0){
 				if(b%a!=0){
-				  write(W, &b, sizeof(b));  // write to W
+					write(W, &b, sizeof(b));  // write to W
 				}
 			}
 			close(W); // without this shell cannot stop exec, cause the child's read will always wait for its write end, until the write end closes.
@@ -37,6 +36,30 @@ void base_pipe(){
   exit(0);
 }
 
+// version of no fork, also executable by using a certain smallest fd refer to the write side of the current pipe
+// void base_pipe(){
+//   int a, p[2];
+//   if(read(R, &a, sizeof(a))>0){ // read from R
+//   	pipe(p); // create a new pipe
+// 		printf("prime %d\n", a); // write to 1
+// 		// printf("%d %d", p[0], p[1]); // always 3 4
+// 		dup(p[W]);
+// 		close(p[W]);
+// 		int b;
+// 		while(read(R, &b, sizeof(b))>0){
+// 			if(b%a!=0){
+// 				write(5, &b, sizeof(b));  // write to W
+// 			}
+// 		}
+// 		close(5); // without this shell cannot stop
+// 		close(R);
+// 		dup(p[R]);
+// 		close(p[R]);
+// 		base_pipe();
+// 	}
+//   exit(0);
+// }
+
 int main(int argc, char *argv[]){
    int i=0, p[2];
    pipe(p);
@@ -45,7 +68,8 @@ int main(int argc, char *argv[]){
        printf("error write");
      }
    }
-   //close(p[1]); // close write end if no data will write anymore, otherwise read from read end will always wait and won't exit. Also p[1] will be closed in redirect
+   //close(p[1]); // close write end if no data will write anymore, otherwise read from read end will always wait and won't exit. 
+	 // Also p[1] will be closed in redirect
    redirect(R, p); // redirect R to the read end of p
    base_pipe();
    exit(0);
