@@ -27,14 +27,33 @@ main(int argc, char *argv[])
   exit(0);
 }
 
+typedef unsigned long uint64;
+
+// uint64
+// r_ra()
+// {
+//   uint64 x;
+//   asm volatile("mv %0, ra" : "=r" (x) );
+//   return x;
+// }
+
 volatile static int count;
 
 void
 periodic()
 {
+  // uint64 ra = r_ra();
+  // printf("ra=%p\n", ra);
   count = count + 1;
   printf("alarm!\n");
   sigreturn();
+  
+  // uint64 fp = r_fp(); // read fp register
+  // printf("%p\n", *(uint64*)(fp-8));
+  // fp = *(uint64*)(fp - 16);
+  // printf("%p\n", *(uint64*)(fp-8));
+  // ra = r_ra();
+  // printf("ra=%p\n", ra);
 }
 
 // tests whether the kernel calls
@@ -43,12 +62,24 @@ void
 test0()
 {
   int i;
+  // uint64 ra = r_ra();
   printf("test0 start\n");
   count = 0;
+  // ra = r_ra();
+  // don't use r_ra() in printf, else output will be the same
+  // printf("in test0, ra=%p\n", ra);
   sigalarm(2, periodic);
+  // ra = r_ra();
+  // printf("in test0, ra=%p\n", ra);
   for(i = 0; i < 1000*500000; i++){
-    if((i % 1000000) == 0)
+    if((i % 1000000) == 0){
+      // ra = r_ra();
+      // printf("in test0, ra=%p\n", ra);
       write(2, ".", 1);
+      // ra = r_ra();
+      // printf("in test0, ra=%p\n", ra);
+    }
+      
     if(count > 0)
       break;
   }
@@ -85,6 +116,7 @@ test1()
   count = 0;
   j = 0;
   sigalarm(2, periodic);
+  // printf("in test1\n");
   for(i = 0; i < 500000000; i++){
     if(count >= 10)
       break;

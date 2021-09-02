@@ -132,3 +132,16 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void 
+backtrace()
+{
+  uint64 fp = r_fp(); // read fp register
+  struct proc* p = myproc();
+  printf("%p\n", p->kstack);
+  uint64 stack_top = PGROUNDUP(fp); // get the top address of the stack page
+  while(fp != stack_top){
+    printf("%p\n", *(uint64*)(fp-8));
+    fp = *(uint64*)(fp - 16);
+  }
+}
