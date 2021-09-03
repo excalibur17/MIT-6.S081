@@ -267,6 +267,13 @@ fork(void)
     return -1;
   }
 
+  uint64 a;
+  for(a = 0; a < PGROUNDDOWN(p->sz); a += PGSIZE){ // add ptes
+    if(walk(np->pagetable, a, 1) <= 0){
+      panic("fork: walk");
+    }
+  }
+
   // Copy user memory from parent to child.
   if(uvmlazycopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);

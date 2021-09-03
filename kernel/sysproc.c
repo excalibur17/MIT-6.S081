@@ -48,11 +48,19 @@ sys_sbrk(void)
   if(argint(0, &n) < 0)
     return -1;
   addr = p->sz;
-  p->sz += n;
-  // if(growproc(n) < 0)
-  //   return -1;
+  if(p->sz+n > MAXVA) // must have this
+    return addr;
   uint64 sz = p->sz;
-  if(n < 0){ // if n < 0, free lazy allocation space
+  uint64 a;
+  if(n > 0){
+    // if(n > nfree()){ // use nfree will be too much slower
+    //   return -1;
+    // }
+    for(a = PGROUNDDOWN(p->sz); a < PGROUNDDOWN(p->sz+n); a += PGSIZE){ // add ptes
+      walk(p->pagetable, a, 1);
+    }
+    p->sz += n; // must not be put before walk
+  } else if(n < 0){ // if n < 0, free lazy allocation space
     p->sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   return addr;
