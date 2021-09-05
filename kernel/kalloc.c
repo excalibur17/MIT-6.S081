@@ -14,6 +14,10 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+// 128*1024*1024/4096 = 2^15
+int ref_count[(PHYSTOP-KERNBASE)/PGSIZE]; // do not use uint
+struct spinlock ref_count_lock;
+
 struct run {
   struct run *next;
 };
@@ -79,4 +83,18 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+int get_refcount(uint64 pa){
+  // acquire(&ref_count_lock);
+  int tmp = ref_count[(pa-KERNBASE)/PGSIZE];
+  // release(&ref_count_lock);
+  return tmp;
+}
+
+void update_refcount(uint64 pa, uint x){
+  acquire(&ref_count_lock);
+  ref_count[(pa-KERNBASE)/PGSIZE] += x;
+  release(&ref_count_lock);
+  // printf("%p %d %d\n", (pa-KERNBASE)/PGSIZE, ref_count[(pa-KERNBASE)/PGSIZE], x);
 }

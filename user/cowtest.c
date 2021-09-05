@@ -155,6 +155,8 @@ filetest()
       }
       exit(0);
     }
+    printf("&i=%p\n", &i);
+    printf("i=%d\n", i);
     if(write(fds[1], &i, sizeof(i)) != sizeof(i)){
       printf("error: write failed\n");
       exit(-1);

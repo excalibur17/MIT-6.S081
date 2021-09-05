@@ -70,20 +70,37 @@ usertrap(void)
   } else if(r_scause() == 15){
     uint64 va = PGROUNDDOWN(r_stval());
     pte_t* pte = walk(p->pagetable, va, 0);
-    if(*pte & PTE_V & PTE_COW){
+
+    // Pit here! *pte & PTE_V leads to PTE_V, and it & PTE_COW is 0
+    // printf("%x\n", (*pte & PTE_V) &PTE_COW);
+    if((*pte & PTE_V) && ((*pte & PTE_U) == PTE_U) && (*pte & PTE_COW)){
       uint64 pa = PTE2PA(*pte);
-      if(ref_count[pa] > 1){
-        uint64 newpa = (uint64)kalloc();
-        if(newpa == 0)
-          p->killed = 1;
-        else{
-          *pte = PA2PTE(newpa) & ~PTE_COW | PTE_W;
-          ref_count[pa]--;
-        }
-      }
+      uint64 newpa = (uint64)kalloc();
+      if(newpa == 0)
+        p->killed = 1;
       else{
-        *pte = *pte | PTE_W;
+        memmove((void*)newpa, (void*)pa, PGSIZE);
+        kfree((void*)pa);
+        *pte = PA2PTE(newpa) | PTE_FLAGS(*pte);
+        *pte = (*pte & ~PTE_COW) | PTE_W;
+        update_refcount(pa, -1);
+        update_refcount(newpa, 1);
       }
+      // if(get_refcount(pa) > 2){
+      //   uint64 newpa = (uint64)kalloc();
+      //   if(newpa == 0)
+      //     p->killed = 1;
+      //   else{
+      //     memmove((void*)newpa, (void*)pa, PGSIZE);
+      //     *pte = PA2PTE(newpa) | PTE_FLAGS(*pte);
+      //     *pte = (*pte & ~PTE_COW) | PTE_W;
+      //     update_refcount(pa, -1);
+      //     update_refcount(newpa, 1);
+      //   }
+      // }
+      // else if(get_refcount(pa) == 2){
+      //   *pte = (*pte | PTE_W) & ~PTE_COW;
+      // }
     } else {
       p->killed = 1;
     }
