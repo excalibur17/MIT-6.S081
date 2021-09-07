@@ -159,8 +159,6 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if(*pte & PTE_V)
       panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
-    if(pa >= KERNBASE) // must have this
-      update_refcount(pa, 1);
     if(a == last)
       break;
     a += PGSIZE;
@@ -188,16 +186,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-
-    uint64 pa = PTE2PA(*pte);
-    if(pa >= KERNBASE)
-      update_refcount(pa, -1);
     if(do_free){
-      if(get_refcount(pa) == 1)
-      {
-        kfree((void*)pa);
-      }
-        
+      uint64 pa = PTE2PA(*pte);
+      kfree((void*)pa);
     }
     *pte = 0;
   }
@@ -327,6 +318,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     *pte = (*pte | PTE_COW) & ~PTE_W;
+    update_refcount(pa, 1);
     if(mappages(new, i, PGSIZE, pa, PTE_FLAGS(*pte)) != 0){
       goto err;
     }
@@ -357,36 +349,21 @@ uvmclear(pagetable_t pagetable, uint64 va)
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
-  uint64 n, va0, pa0, newpa;
+  uint64 n, va0, pa0;   
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    if(va0 >= MAXVA)
       return -1;
     pte_t* pte = walk(pagetable, va0, 0);
+    if(pte == 0)
+      return -1;
+    if((*pte & PTE_W) == 0){
+      if(cowfault(pagetable, va0) < 0)
+        return -1;
+    }
+    pa0 = PTE2PA(*pte);
     
-    if(*pte & PTE_V & PTE_COW){
-      if(get_refcount(pa0) > 2){
-        newpa = (uint64)kalloc();
-        if(newpa == 0)
-          return -1;
-        else{
-          memmove((void*)newpa, (void*)pa0, PGSIZE);
-          *pte = PA2PTE(newpa) | PTE_FLAGS(*pte);
-          *pte = (*pte & ~PTE_COW) | PTE_W;
-          update_refcount(pa0, -1);
-          update_refcount(newpa, 1);
-        }
-        pa0 = newpa;
-      }
-      else if(get_refcount(pa0) == 2){
-        *pte = (*pte | PTE_W) & ~PTE_COW;
-      }
-    }
-    else{
-      printf("%p\n", *pte);
-    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

@@ -17,6 +17,7 @@ extern char end[]; // first address after kernel.
 // 128*1024*1024/4096 = 2^15
 int ref_count[(PHYSTOP-KERNBASE)/PGSIZE]; // do not use uint
 struct spinlock ref_count_lock;
+#define REF_IDX(x) (((uint64)(x)-KERNBASE)/PGSIZE)
 
 struct run {
   struct run *next;
@@ -39,8 +40,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    ref_count[REF_IDX(p)] = 1;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -54,6 +57,17 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+
+  int tmp = 0;
+  acquire(&ref_count_lock);
+  if((uint64)pa >= KERNBASE && (uint64)pa < PHYSTOP){
+    if(ref_count[REF_IDX(pa)] < 1)
+      panic("kfree ref");
+    tmp = --ref_count[REF_IDX(pa)];
+  }
+  release(&ref_count_lock);
+  if(tmp > 0)
+    return;
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -76,8 +90,18 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+     // must have this
+    if((uint64)r >= KERNBASE && (uint64)r < PHYSTOP){
+      acquire(&ref_count_lock);
+      if(ref_count[REF_IDX(r)] != 0)
+        panic("kalloc: ref_count");
+      ref_count[REF_IDX(r)] = 1;
+      release(&ref_count_lock);
+    }
+  }
+    
   release(&kmem.lock);
 
   if(r)
@@ -92,9 +116,9 @@ int get_refcount(uint64 pa){
   return tmp;
 }
 
-void update_refcount(uint64 pa, uint x){
+// must not be uint x ...
+void update_refcount(uint64 pa, int x){
   acquire(&ref_count_lock);
   ref_count[(pa-KERNBASE)/PGSIZE] += x;
   release(&ref_count_lock);
-  // printf("%p %d %d\n", (pa-KERNBASE)/PGSIZE, ref_count[(pa-KERNBASE)/PGSIZE], x);
 }

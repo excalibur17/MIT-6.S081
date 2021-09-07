@@ -10,6 +10,7 @@ struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
+extern int ref_count[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
@@ -29,6 +30,45 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int cowfault(pagetable_t pagetable, uint64 va){
+  if(va >= MAXVA) // else will panic in walk
+    return -1;
+  pte_t* pte = walk(pagetable, va, 0);
+  if(pte == 0)
+    return -1;
+  // Pit here! *pte & PTE_V leads to PTE_V, and it & PTE_COW is 0
+  if((*pte & PTE_V) && (*pte & PTE_U) && (*pte & PTE_COW)){
+    uint64 pa = PTE2PA(*pte);
+    if(pa < KERNBASE || pa >= PHYSTOP)
+      panic("usertrap");
+    if(get_refcount(pa) > 1){ //if ref count >= 2
+      uint64 newpa = (uint64)kalloc();
+      if(newpa == 0)
+        return -1;
+      memmove((void*)newpa, (void*)pa, PGSIZE);
+      *pte = ((PA2PTE(newpa) |PTE_FLAGS(*pte)) & ~PTE_COW) | PTE_W;
+      // cannot use this cause there may be many threads operating on the same cow page
+      // update_refcount(pa, -1);
+      kfree((void*)pa);
+      // if(get_refcount(pa) < 1) printf("xxx %d\n", get_refcount(pa));
+    } else {
+      *pte = (*pte | PTE_W) & ~PTE_COW;
+    }
+    return 0;
+  
+    // another way to do this
+    // uint64 newpa = (uint64)kalloc();
+    // if(newpa == 0)
+    //   return -1;
+    // memmove((void*)newpa, (void*)pa, PGSIZE);
+    // int flag = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W;
+    // kfree((void*)pa); // must free
+    // *pte = PA2PTE(newpa) | flag;
+    // return 0;
+  } else {
+    return -1;
+  }
+}
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -68,42 +108,8 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else if(r_scause() == 15){
-    uint64 va = PGROUNDDOWN(r_stval());
-    pte_t* pte = walk(p->pagetable, va, 0);
-
-    // Pit here! *pte & PTE_V leads to PTE_V, and it & PTE_COW is 0
-    // printf("%x\n", (*pte & PTE_V) &PTE_COW);
-    if((*pte & PTE_V) && ((*pte & PTE_U) == PTE_U) && (*pte & PTE_COW)){
-      uint64 pa = PTE2PA(*pte);
-      uint64 newpa = (uint64)kalloc();
-      if(newpa == 0)
-        p->killed = 1;
-      else{
-        memmove((void*)newpa, (void*)pa, PGSIZE);
-        kfree((void*)pa);
-        *pte = PA2PTE(newpa) | PTE_FLAGS(*pte);
-        *pte = (*pte & ~PTE_COW) | PTE_W;
-        update_refcount(pa, -1);
-        update_refcount(newpa, 1);
-      }
-      // if(get_refcount(pa) > 2){
-      //   uint64 newpa = (uint64)kalloc();
-      //   if(newpa == 0)
-      //     p->killed = 1;
-      //   else{
-      //     memmove((void*)newpa, (void*)pa, PGSIZE);
-      //     *pte = PA2PTE(newpa) | PTE_FLAGS(*pte);
-      //     *pte = (*pte & ~PTE_COW) | PTE_W;
-      //     update_refcount(pa, -1);
-      //     update_refcount(newpa, 1);
-      //   }
-      // }
-      // else if(get_refcount(pa) == 2){
-      //   *pte = (*pte | PTE_W) & ~PTE_COW;
-      // }
-    } else {
+    if(cowfault(p->pagetable, r_stval()) < 0)
       p->killed = 1;
-    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
