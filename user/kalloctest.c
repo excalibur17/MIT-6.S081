@@ -52,6 +52,8 @@ void test1(void)
     if(pid == 0){
       for(i = 0; i < N; i++) {
         a = sbrk(4096);
+        // if(i%10000 == 0)
+        //   printf("i=%d\n", i);
         *(int *)(a+4) = 1;
         a1 = sbrk(-4096);
         if (a1 != a + 4096) {
