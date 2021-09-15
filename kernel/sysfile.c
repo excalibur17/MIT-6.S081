@@ -285,39 +285,9 @@ create(char *path, short type, short major, short minor)
 }
 
 uint64
-open_symlink(char* path){
-  static int depth = 1;
-  struct inode *ip;
-  char new_path[MAXPATH];
-
-  if(depth > 10){
-    return 0;
-  }
-
-  begin_op();
-  if((ip = namei(path)) == 0){
-    end_op();
-    return 0;
-  }
-  ilock(ip);
-  if(ip->type == T_SYMLINK){
-    depth++;
-    struct buf* bp = bread(ip->dev, ip->addrs[0]);
-    memmove(new_path, bp->data, strlen((char*)bp->data));
-    brelse(bp);
-    iunlock(ip);
-    end_op();
-    return open_symlink(new_path);
-  }
-  iunlock(ip);
-  end_op();
-  return (uint64)path;
-}
-
-uint64
 sys_open(void)
 {
-  char path[MAXPATH], *new_path;
+  char path[MAXPATH];
   int fd, omode;
   struct file *f;
   struct inode *ip;
@@ -327,12 +297,6 @@ sys_open(void)
     return -1;
 
   begin_op();
-
-  if(omode & O_NOFOLLOW){
-    if((new_path = (char*)open_symlink(path)) == 0)
-      return -1;
-    memmove(path, new_path, strlen(new_path));
-  }
 
   if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
@@ -350,6 +314,29 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
+    }
+  }
+
+  int depth = 0;
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+    while(ip->type == T_SYMLINK){
+      depth++;
+      if(depth > 20){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      if(readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      };
+      iunlockput(ip);
+      if((ip = namei(path)) == 0){
+        end_op();
+        return -1;
+      }
+      ilock(ip);
     }
   }
 
@@ -522,22 +509,34 @@ sys_pipe(void)
   return 0;
 }
 
-extern uint bmap(struct inode, uint);
+// extern uint bmap(struct inode ip, uint addr);
 uint64
-symlink(void)
+sys_symlink(void)
 {
-  uint64 *target = 0, *path = 0;
-  if(argaddr(0, target) < 0)
+  // cannot not use this with argaddr, user address is helpless
+  // uint64 *target = 0, *path = 0;
+  char target[MAXPATH], path[MAXPATH];
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
     return -1;
-  if(argaddr(1, path) < 0)
+
+  begin_op();
+  struct inode* ip;
+  if((ip = create((char*)path, T_SYMLINK, 0, 0)) == 0){
+    end_op();
     return -1;
-  
-  struct inode* ip = create((char*)path, T_SYMLINK, 0, 0);
-  uint64 addr = bmap(*ip, 0);
-  struct buf* bp = bread(ip->dev, addr);
-  memmove((char*)(bp->data), target, strlen((char*)target));
-  log_write(bp);
-  brelse(bp);
+  }
+  if(writei(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH){
+    end_op();
+    return -1;
+  }
+  iunlockput(ip);
+  end_op();
+
+  // uint64 addr = bmap(*ip, 0);
+  // struct buf* bp = bread(ip->dev, addr);
+  // memmove((char*)(bp->data), target, strlen((char*)target));
+  // log_write(bp);
+  // brelse(bp);
 
   return 0;
 }
