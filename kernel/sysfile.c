@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "buf.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -284,9 +285,39 @@ create(char *path, short type, short major, short minor)
 }
 
 uint64
+open_symlink(char* path){
+  static int depth = 1;
+  struct inode *ip;
+  char new_path[MAXPATH];
+
+  if(depth > 10){
+    return 0;
+  }
+
+  begin_op();
+  if((ip = namei(path)) == 0){
+    end_op();
+    return 0;
+  }
+  ilock(ip);
+  if(ip->type == T_SYMLINK){
+    depth++;
+    struct buf* bp = bread(ip->dev, ip->addrs[0]);
+    memmove(new_path, bp->data, strlen((char*)bp->data));
+    brelse(bp);
+    iunlock(ip);
+    end_op();
+    return open_symlink(new_path);
+  }
+  iunlock(ip);
+  end_op();
+  return (uint64)path;
+}
+
+uint64
 sys_open(void)
 {
-  char path[MAXPATH];
+  char path[MAXPATH], *new_path;
   int fd, omode;
   struct file *f;
   struct inode *ip;
@@ -296,6 +327,12 @@ sys_open(void)
     return -1;
 
   begin_op();
+
+  if(omode & O_NOFOLLOW){
+    if((new_path = (char*)open_symlink(path)) == 0)
+      return -1;
+    memmove(path, new_path, strlen(new_path));
+  }
 
   if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
@@ -482,5 +519,25 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+extern uint bmap(struct inode, uint);
+uint64
+symlink(void)
+{
+  uint64 *target = 0, *path = 0;
+  if(argaddr(0, target) < 0)
+    return -1;
+  if(argaddr(1, path) < 0)
+    return -1;
+  
+  struct inode* ip = create((char*)path, T_SYMLINK, 0, 0);
+  uint64 addr = bmap(*ip, 0);
+  struct buf* bp = bread(ip->dev, addr);
+  memmove((char*)(bp->data), target, strlen((char*)target));
+  log_write(bp);
+  brelse(bp);
+
   return 0;
 }

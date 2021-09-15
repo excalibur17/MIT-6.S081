@@ -71,7 +71,6 @@ bget(uint dev, uint blockno)
       return b;
     }
   }
-
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
   for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
