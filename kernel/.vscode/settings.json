@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "memlayout.h": "c",
+    "fcntl.h": "c",
+    "defs.h": "c",
+    "vma.h": "c",
+    "file.h": "c",
+    "types.h": "c"
+  }
+}

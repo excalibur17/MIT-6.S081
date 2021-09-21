@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "vma.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,104 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  int i, oldsz;
+  struct proc* p;
+  struct VMA* vma;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 ||
+    argint(3, &flags) < 0 || argint(4, &fd) < 0 || argint(5, &offset) < 0)
+      return -1;
+  
+  p = myproc();
+  if(!p->ofile[fd]->readable && (prot & PROT_READ))
+    return -1;
+  if(!p->ofile[fd]->writable && (prot & PROT_WRITE) && flags == MAP_SHARED)
+    return -1;
+  
+  if((vma = alloc_vma()) == 0)
+    return -1;
+
+  acquire(&p->lock);
+  for(i = 0; i < NOFILE; i++){
+    if(p->vmas[i] == 0){
+      p->vmas[i] = vma;
+      break;
+    }
+  }
+  release(&p->lock);
+
+  if(i == NOFILE)
+    return -1;
+
+  oldsz = p->sz;
+  if((p->sz = p->sz + length) >= MAXVA - PGSIZE * 2) // lazy allocation
+    return -1;
+  
+  vma->addr = oldsz; // addr is zero in this lab!
+  vma->f = p->ofile[fd];
+  vma->prot = prot;
+  vma->length = length;
+  vma->flags = flags;
+  vma->offset = offset;
+  filedup(vma->f); // cannot durectly ++vma->f->ref
+
+  return oldsz;
+}
+
+uint64 
+sys_munmap(void)
+{
+  uint64 addr;
+  int length, i;
+  struct proc* p;
+  struct VMA* vma;
+  struct inode* ip;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+
+  p = myproc();
+  for(i = 0; i < NOFILE; i++){
+    if(p->vmas[i] && p->vmas[i]->addr == addr)
+      break;
+  }
+  if(i == NOFILE) // addr must start at a start address of a vma
+    return -1;
+
+  vma = p->vmas[i];
+  //idealy, it should only write dirty pages back by checking the D bit in PTE
+  // mmaptest don't test non-dirty pages not written back
+  if(vma->flags == MAP_SHARED){ 
+    begin_op();
+    ip = vma->f->ip;
+    ilock(ip);
+    writei(ip, 1, addr, vma->offset, length);
+    iunlock(ip);
+    end_op();
+  }
+  if(vma->length == length){
+    fileclose(vma->f);
+    free_vma(p->vmas[i]);
+    p->vmas[i] = 0;
+  }
+  else if(vma->length > length){
+    vma->addr += length;
+    vma->length -= length;
+    vma->offset += length;
+  }
+  else
+    panic("munmap");
+  
+  // only free pages that the whole page is included in length
+  uvmunmap(p->pagetable, addr, length/PGSIZE, 1);
+
   return 0;
 }

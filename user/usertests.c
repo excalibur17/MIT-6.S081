@@ -2183,6 +2183,7 @@ kernmem(char *s)
 
   for(a = (char*)(KERNBASE); a < (char*) (KERNBASE+2000000); a += 50000){
     pid = fork();
+    printf("a=%p\n", a);
     if(pid < 0){
       printf("%s: fork failed\n", s);
       exit(1);

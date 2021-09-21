@@ -5,6 +5,11 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h" // must include
+#include "fs.h"
+#include "file.h"
+#include "fcntl.h"
+#include "vma.h"
 
 struct cpu cpus[NCPU];
 
@@ -302,6 +307,20 @@ fork(void)
 
   np->state = RUNNABLE;
 
+  for(i = 0; i < NOFILE; i++){
+    if(p->vmas[i]){
+      np->vmas[i] = alloc_vma();
+      memmove((void*)np->vmas[i], (void*)p->vmas[i], sizeof(struct VMA));
+      // np->vmas[i]->addr = p->vmas[i]->addr;
+      // np->vmas[i]->f = p->vmas[i]->f;
+      // np->vmas[i]->flags = p->vmas[i]->flags;
+      // np->vmas[i]->length = p->vmas[i]->length;
+      // np->vmas[i]->prot = p->vmas[i]->prot;
+      // np->vmas[i]->busy = 1;
+      filedup(np->vmas[i]->f);
+    }
+  }
+
   release(&np->lock);
 
   return pid;
@@ -343,6 +362,27 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  struct VMA* vma;
+  int i;
+  for(i = 0; i < NOFILE; i++){
+    vma = p->vmas[i];
+    if(vma && vma->addr){
+      struct inode* ip = 0;
+      if(vma->flags == MAP_SHARED){
+        begin_op();
+        ip = vma->f->ip;
+        ilock(ip);
+        writei(ip, 1, vma->addr, vma->offset, vma->length);
+        iunlock(ip);
+        end_op();
+      }
+      // uvmunmap(p->pagetable, vma->addr, vma->length/PGSIZE, 1);
+      fileclose(vma->f);
+      free_vma(vma);
+      p->vmas[i] = 0;
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

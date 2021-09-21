@@ -5,6 +5,11 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
+#include "vma.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -27,6 +32,59 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+}
+
+int
+sigfault_handler(struct proc* p, uint64 addr){
+  if(addr >= p->sz)
+    return -1;
+
+  uint64 guard_base = PGROUNDDOWN(p->trapframe->sp) - PGSIZE;
+  if(PGROUNDDOWN(addr) == guard_base)
+    return -1;
+  
+  int i;
+  struct file* f;
+  struct VMA* vma;
+  struct inode* ip;
+  uint64 pa, page_base;
+
+  for(i = 0; i < NOFILE; i++){
+    vma = p->vmas[i];
+    if(vma && vma->addr <= addr && vma->addr + vma->length > addr){
+      break;
+    }
+  }
+  if(i == NOFILE)
+    return -1;
+  
+  int flags = PTE_U; // must set U bit
+  if(vma->prot & PROT_READ)
+    flags |= PTE_R;
+  if(vma->prot & PROT_WRITE)
+    flags |= PTE_W;
+
+  page_base = PGROUNDDOWN(addr);
+  if((pa = (uint64)kalloc()) == 0)
+    return -1;
+
+  memset((void*)pa, 0, PGSIZE); // must set zero for mmaptest
+  if(mappages(p->pagetable, page_base, PGSIZE, pa, flags) != 0){
+    kfree((void*)pa);
+    return -1;
+  }
+
+  f = vma->f;
+  ip = f->ip;
+  if(!f->readable)
+    return -1;
+  begin_op();
+  ilock(ip);
+  readi(ip, 0, pa, PGROUNDDOWN(vma->offset + (page_base - vma->addr)), PGSIZE);
+  iunlock(ip);
+  end_op();
+
+  return 0;
 }
 
 //
@@ -65,6 +123,10 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 13 || r_scause() == 15){
+    if(sigfault_handler(p, r_stval()) < 0){
+      p->killed = 1;
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
